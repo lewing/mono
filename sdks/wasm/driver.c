@@ -326,9 +326,9 @@ mono_wasm_invoke_js (MonoString *str, int *is_exception)
 	if (str == NULL)
 		return NULL;
 
-	char *native_val = mono_string_to_utf8 (str);
+	mono_unichar2 *native_val = mono_string_to_utf16 (str);
 	mono_unichar2 *native_res = (mono_unichar2*)EM_ASM_INT ({
-		var str = UTF8ToString ($0);
+		var str = UTF16ToString ($0);
 		try {
 			var res = eval (str);
 			if (res === null || res == undefined)
@@ -633,10 +633,10 @@ mono_wasm_assembly_get_entry_point (MonoAssembly *assembly)
 	return mono_get_method (image, entry, NULL);
 }
 
-EMSCRIPTEN_KEEPALIVE char *
-mono_wasm_string_get_utf8 (MonoString *str)
+EMSCRIPTEN_KEEPALIVE mono_unichar2 *
+mono_wasm_string_get_utf16 (MonoString *str)
 {
-	return mono_string_to_utf8 (str); //XXX JS is responsible for freeing this
+	return mono_string_to_utf16 (str); //XXX JS is responsible for freeing this
 }
 
 EMSCRIPTEN_KEEPALIVE MonoString *

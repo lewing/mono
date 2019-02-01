@@ -29,11 +29,11 @@ var DotNetSupportLib = {
 			if (mono_obj == 0)
 				return null;
 
-			if (!this.mono_string_get_utf8)
-				this.mono_string_get_utf8 = Module.cwrap ('mono_wasm_string_get_utf8', 'number', ['number']);
+			if (!this.mono_string_get_utf16)
+				this.mono_string_get_utf16 = Module.cwrap ('mono_wasm_string_get_utf16', 'number', ['number']);
 
-			var raw = this.mono_string_get_utf8 (mono_obj);
-			var res = Module.UTF8ToString (raw);
+			var raw = this.mono_string_get_utf16 (mono_obj);
+			var res = Module.UTF16ToString (raw);
 			Module._free (raw);
 
 			return res;
