@@ -490,6 +490,10 @@ namespace WsProxy {
 			// results in a "Memory access out of bounds", causing 'values' to be null,
 			// so skip returning variable values in that case.
 			for (int i = 0; values != null && i < vars.Length; ++i) {
+				var value = values [i] ["value"];
+				if (((string)value ["description"]) == null)
+					value ["description"] = value ["value"]?.ToString();
+
 				var_list.Add (JObject.FromObject (new {
 					name = vars [i].Name,
 					value = values [i] ["value"]
