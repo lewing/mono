@@ -128,7 +128,7 @@ namespace WsProxy {
 		public SourceLocation (MethodInfo mi, SequencePoint sp)
 		{
 			this.id = mi.SourceId;
-			this.line = sp.StartLine;
+			this.line = sp.StartLine - 1;
 			this.column = sp.StartColumn - 1;
 			this.cliLoc = new CliLocation (mi, sp.Offset);
 		}
@@ -466,11 +466,11 @@ namespace WsProxy {
 			this.DebuggerFileName = doc.Url.Replace ("\\", "/").Replace (":", "");
 
 			this.SourceUri = new Uri ((Path.IsPathRooted (doc.Url) ? "file://" : "") + doc.Url, UriKind.RelativeOrAbsolute);
-						if (SourceUri.IsFile && File.Exists (SourceUri.LocalPath)) {
-								this.Url = this.SourceUri.ToString ();
-						} else {
-								this.Url = DotNetUrl;
-						}
+			if (SourceUri.IsFile && File.Exists (SourceUri.LocalPath)) {
+				this.Url = this.SourceUri.ToString ();
+			} else {
+				this.Url = DotNetUrl;
+			}
 
 		}
 
@@ -557,15 +557,18 @@ namespace WsProxy {
 		*/
 		static bool Match (SequencePoint sp, SourceLocation start, SourceLocation end)
 		{
-			if (start.Line > sp.StartLine)
+			var spStart = (Line: sp.StartLine - 1, Column: sp.StartColumn - 1);
+			var spEnd = (Line: sp.EndLine - 1, Column: sp.EndColumn - 1);
+
+			if (start.Line > spStart.Line)
 				return false;
-			if ((start.Column + 1) > sp.StartColumn && start.Line == sp.StartLine)
+			if (start.Column > spStart.Column && start.Line == sp.StartLine)
 				return false;
 
-			if (end.Line < sp.EndLine)
+			if (end.Line < spEnd.Line)
 				return false;
 
-			if ((end.Column + 1) < sp.EndColumn && end.Line == sp.EndLine)
+			if (end.Column < spEnd.Column && end.Line == spEnd.Line)
 				return false;
 
 			return true;
@@ -607,18 +610,20 @@ namespace WsProxy {
 		[1] It's so we can deal with the Runtime.compileScript ide cmd
 		*/
 		static bool Match (SequencePoint sp, int line, int column)
-		{
-			if (sp.StartLine > line || sp.EndLine < line)
+		{ 
+			var bp = (line: line + 1, column: column + 1);
+
+			if (sp.StartLine > bp.line || sp.EndLine < bp.line)
 				return false;
 
 			//Chrome sends a zero column even if getPossibleBreakpoints say something else
 			if (column == 0)
 				return true;
 
-			if (sp.StartColumn > (column + 1) && sp.StartLine == line)
+			if (sp.StartColumn > bp.column && sp.StartLine == bp.line)
 				return false;
 
-			if (sp.EndColumn < (column + 1) && sp.EndLine == line)
+			if (sp.EndColumn < bp.column && sp.EndLine == bp.line)
 				return false;
 
 			return true;
