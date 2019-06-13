@@ -38,6 +38,7 @@ extern void mono_wasm_add_frame (int il_offset, int method_token, const char *as
 extern void mono_wasm_fire_bp (void);
 extern void mono_wasm_add_bool_var (gint8);
 extern void mono_wasm_add_number_var (double);
+extern void mono_wasm_add_int64_var (guint64);
 extern void mono_wasm_add_string_var (const char*);
 extern void mono_wasm_add_obj_var (const char*, guint64);
 extern void mono_wasm_add_array_var (const char*, guint64);
@@ -610,7 +611,7 @@ static gboolean describe_value(MonoType * type, gpointer addr)
 			mono_wasm_add_number_var (*(guint32*)addr);
 			break;
 		case MONO_TYPE_I8:
-			mono_wasm_add_number_var (*(gint64*)addr);
+			mono_wasm_add_int64_var (*(gint64*)addr);
 			break;
 		case MONO_TYPE_U8:
 			mono_wasm_add_number_var (*(guint64*)addr);

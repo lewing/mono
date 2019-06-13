@@ -239,6 +239,16 @@ var MonoSupportLib = {
 		});
 	},
 
+	mono_wasm_add_int64_var: function(var_value) {
+
+		MONO.var_info.push({
+			value: {
+				type: typeof (var_value),
+				value: var_value,
+			}
+		});
+	},
+
 	mono_wasm_add_properties_var: function(name) {
 		MONO.var_info.push({
 			name: Module.UTF8ToString (name),
