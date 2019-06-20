@@ -183,7 +183,7 @@ var App = {
 					Module.print ("REGRESSION RESULT: " + res);
 				} catch (e) {
 					Module.print ("ABORT: " + e);
-					print (e.stack);
+					Module.print (e.stack);
 					res = 1;
 				}
 
@@ -231,53 +231,50 @@ var App = {
 				var res = runtime_invoke (main_method, 0, invoke_args, eh_throw);
 				var eh_res = Module.getValue (eh_throw, "i32");
 				if (eh_res == 1) {
-					print ("Exception:" + string_get_utf8 (res));
+					Module.print ("Exception:" + string_get_utf8 (res));
 					wasm_exit (1);
 				}
 			} catch (ex) {
-				print ("JS exception: " + ex);
-				print (ex.stack);
+				Module.print ("JS exception: " + ex);
+				Module.print (ex.stack);
 				wasm_exit (1);
 			}
 			return;
 		}
 
-		Module.print("Initializing Binding Test Suite support.....");
+		Module.print ("Initializing Binding Test Suite support.....");
 
 		//binding test suite support code
 		binding_test_module = assembly_load ("binding_tests");
 		if (!binding_test_module)
 		{
-			Module.printErr("Binding tests module 'binding_tests' not found.  Exiting Tests.")
-			throw new Error("Binding tests module 'binding_tests' not found.  Exiting Tests.");
+			Module.printErr ("Binding tests module 'binding_tests' not found.  Exiting Tests.")
+			throw new Error ("Binding tests module 'binding_tests' not found.  Exiting Tests.");
 		}
-		
+
 		binding_test_class = find_class (binding_test_module, "", "TestClass");
 		if (!binding_test_class)
 		{
-			Module.printErr("Binding tests class 'TestClass' not found.  Exiting Tests.")
-			throw new Error("Binding tests class 'TestClass' not found.  Exiting Tests.");
+			Module.printErr ("Binding tests class 'TestClass' not found.  Exiting Tests.")
+			throw new Error ("Binding tests class 'TestClass' not found.  Exiting Tests.");
 		}		
 
-		Module.print("Binding support complete.");
+		Module.print ("Binding support complete.");
+		Module.print ("Checking for [main]Driver:Send ....");
 
-		
-		Module.print("Checking for [main]Driver:Send ....");
-		
 		var send_message = undefined;
-		
+
 		try
 		{
-			send_message = BINDING.bind_static_method("[main]Driver:Send");
+			send_message = BINDING.bind_static_method ("[main]Driver:Send");
 		}
 		catch (e)
 		{
-			Module.printErr("[main]Driver:Send not found: " + e);
+			Module.printErr ("[main]Driver:Send not found: " + e);
 			throw e;
-		
 		}
 
-		Module.print("Driver binding complete.");
+		Module.print ("Driver binding complete.");
 
 		var main_argc = 1
 		var main_argv = Module._malloc (main_argc * 4);
@@ -296,29 +293,29 @@ var App = {
 			{
 				res = send_message("start-test", testArguments [i])
 			} catch (e) {
-				printErr ("BAD SEND MSG: " + e);
+				Module.printErr ("BAD SEND MSG: " + e);
 				bad_send_msg_detected = true;
 			}
-			print ("-----STARTED " + testArguments [i] + "---- " + res);
+			Module.print ("-----STARTED " + testArguments [i] + "---- " + res);
 
 			if (res == "SUCCESS") {
 				while (send_message ("pump-test", testArguments [i]) != "DONE") 
 				{
 					Module.pump_message ();
-					print ("|");
+					Module.print ("|");
 				}
-				print ("\nDONE")
+				Module.print ("\nDONE")
 			}
 		}
 
 		var status = send_message ("test-result", "");
-		print ("Test status " + status)
+		Module.print ("Test status " + status)
 		if (status != "PASS")
 			fail_exec ("BAD TEST STATUS");
 
 		if (bad_send_msg_detected)
 			fail_exec ("BAD MSG SEND DETECTED");
-    },
+	},
 };
 
 //binding test suite support code
