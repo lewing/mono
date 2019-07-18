@@ -286,6 +286,14 @@ hello.exe: hello.cs
 run-aot-sample: build-aot-sample
 	(cd bin/aot-sample && $(SM) runtime.js --run hello.exe)
 
+build-interp-pizza: packager.exe
+	mono packager.exe --emscripten-sdkdir=$(EMSCRIPTEN_SDK_DIR) --mono-sdkdir=$(TOP)/sdks/out --search-path=$(TOP)/external/illinker-test-assets/wasm/BlazingPizza.Client/bin/Release/netstandard2.0/ --appdir=bin/BlazingPizza.Client --nobinding --builddir=obj/BlazingPizza.Client $(TOP)/external/illinker-test-assets/wasm/BlazingPizza.Client/bin/Release/netstandard2.0/BlazingPizza.Client.dll --linker --link-icalls
+	ninja -v -C obj/BlazingPizza.Client
+
+build-interp-helloblazor: packager.exe
+	mono packager.exe --emscripten-sdkdir=$(EMSCRIPTEN_SDK_DIR) --mono-sdkdir=$(TOP)/sdks/out --search-path=$(TOP)/external/illinker-test-assets/wasm/HelloWorld/bin/Release/netstandard2.0/ --appdir=bin/HelloWorld --nobinding --builddir=obj/HelloWorld --template=runtime-tests.js $(TOP)/external/illinker-test-assets/wasm/HelloWorld/bin/Release/netstandard2.0/HelloWorld.dll --linker --link-icalls
+	ninja -v -C obj/HelloWorld
+
 build-interp-sample: packager.exe hello.exe
 	mono --debug packager.exe --emscripten-sdkdir=$(EMSCRIPTEN_SDK_DIR) --mono-sdkdir=$(TOP)/sdks/out -appdir=bin/interp-sample --nobinding --builddir=obj/interp-sample --template=runtime-tests.js hello.exe --linker --link-icalls
 	ninja -v -C obj/interp-sample
