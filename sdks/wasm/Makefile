@@ -286,6 +286,14 @@ hello.exe: hello.cs
 run-aot-sample: build-aot-sample
 	(cd bin/aot-sample && $(SM) runtime.js --run hello.exe)
 
+build-aot-pizza: packager.exe
+	mono packager.exe --aot --emscripten-sdkdir=$(EMSCRIPTEN_SDK_DIR) --mono-sdkdir=$(TOP)/sdks/out --search-path=$(TOP)/external/illinker-test-assets/wasm/BlazingPizza.Client/bin/Release/netstandard2.0/ --appdir=bin/aot-BlazingPizza.Client --nobinding --builddir=obj/aot-BlazingPizza.Client $(TOP)/external/illinker-test-assets/wasm/BlazingPizza.Client/bin/Release/netstandard2.0/BlazingPizza.Client.dll --linker --link-icalls
+	ninja -v -C obj/aot-BlazingPizza.Client
+
+build-aot-helloblazor: packager.exe
+	mono packager.exe --aot --emscripten-sdkdir=$(EMSCRIPTEN_SDK_DIR) --mono-sdkdir=$(TOP)/sdks/out --search-path=$(TOP)/external/illinker-test-assets/wasm/HelloWorld/bin/Release/netstandard2.0/ --appdir=bin/aot-HelloWorld --nobinding --builddir=obj/aot-HelloWorld --template=runtime-tests.js $(TOP)/external/illinker-test-assets/wasm/HelloWorld/bin/Release/netstandard2.0/HelloWorld.dll --linker --link-icalls
+	ninja -v -C obj/aot-HelloWorld
+
 build-interp-pizza: packager.exe
 	mono packager.exe --emscripten-sdkdir=$(EMSCRIPTEN_SDK_DIR) --mono-sdkdir=$(TOP)/sdks/out --search-path=$(TOP)/external/illinker-test-assets/wasm/BlazingPizza.Client/bin/Release/netstandard2.0/ --appdir=bin/BlazingPizza.Client --nobinding --builddir=obj/BlazingPizza.Client $(TOP)/external/illinker-test-assets/wasm/BlazingPizza.Client/bin/Release/netstandard2.0/BlazingPizza.Client.dll --linker --link-icalls
 	ninja -v -C obj/BlazingPizza.Client
