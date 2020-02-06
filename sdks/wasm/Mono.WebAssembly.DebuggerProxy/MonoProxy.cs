@@ -222,6 +222,11 @@ namespace WebAssembly.Net.Debugging {
 
 			case "Debugger.stepOut": {
 					if (this.current_callstack != null) {
+						if (this.current_callstack.Count < 2) {
+							this.current_callstack = null;
+							return false;
+						}
+
 						await Step (id, StepKind.Out, token);
 						return true;
 					}
