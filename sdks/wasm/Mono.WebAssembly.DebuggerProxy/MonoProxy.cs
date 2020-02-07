@@ -98,14 +98,25 @@ namespace WebAssembly.Net.Debugging {
 		Over
 	}
 
+	internal class StoreSession {
+		public DebugStore Store { get; } = new DebugStore ();
+		public TaskCompletionSource<DebugStore> Source { get; } = new TaskCompletionSource<DebugStore> ();
+	}
+
+	internal class ExecutionContext {
+		public int Id { get; set; }
+		public object AuxData { get; set; }
+	}
+
 	public class MonoProxy : DevToolsProxy {
-		DebugStore store;
+		//DebugStore store;
 		List<Breakpoint> breakpoints = new List<Breakpoint> ();
 		List<Frame> current_callstack;
 		bool runtime_ready;
 		int local_breakpoint_id;
-		int ctx_id;
-		JObject aux_ctx_data;
+		Dictionary<string, ExecutionContext> contexts = new Dictionary<string, ExecutionContext> ();
+		Dictionary<string, StoreSession> sessions = new Dictionary<string, StoreSession> ();
+		object sessionLock = new object ();
 
 		public MonoProxy () { }
 
@@ -118,11 +129,11 @@ namespace WebAssembly.Net.Debugging {
 			case "Runtime.executionContextCreated": {
 					var ctx = args? ["context"];
 					var aux_data = ctx? ["auxData"] as JObject;
+					var id = ctx ["id"].Value<int> ();
 					if (aux_data != null) {
 						var is_default = aux_data ["isDefault"]?.Value<bool> ();
 						if (is_default == true) {
-							var id = new MessageId { id = ctx ["id"].Value<int> (), sessionId = sessionId.sessionId };
-							await OnDefaultContext (id, aux_data, token);
+							await OnDefaultContext (sessionId, new ExecutionContext { Id = id, AuxData = aux_data }, token);
 						}
 					}
 					break;
@@ -135,21 +146,20 @@ namespace WebAssembly.Net.Debugging {
 						return true;
 					}
 					if (top_func == MonoConstants.RUNTIME_IS_READY) {
-						await OnRuntimeReady (new SessionId { sessionId = sessionId.sessionId }, token);
+						await OnRuntimeReady (sessionId, token);
 						return true;
 					}
 					break;
 				}
 			case "Debugger.scriptParsed":{
 					if (args?["url"]?.Value<string> ()?.StartsWith ("wasm://") == true) {
-						// Console.WriteLine ("ignoring wasm event");
+						Log ("verbose", $"ignoring wasm: Debugger.scriptParsed {args?["url"]?.Value<string> ()}");
 						return true;
 					}
 					break;
 				}
 			case "Debugger.enabled": {
-					if (store == null)
-						await LoadStore (new SessionId { sessionId = args? ["sessionId"]?.Value<string> () }, token);
+					await LoadStore (new SessionId { sessionId = args? ["sessionId"]?.Value<string> () }, token);
 					break;
 				}
 			}
@@ -194,8 +204,9 @@ namespace WebAssembly.Net.Debugging {
 				}
 
 			case "Debugger.setBreakpointByUrl": {
+					//await LoadStore (id, token);
 					Log ("verbose", $"BP req {args}");
-					var bp_req = BreakPointRequest.Parse (args, store);
+					var bp_req = BreakPointRequest.Parse (args, GetStoreSession (id)?.Store);
 					if (bp_req != null) {
 						await SetBreakPoint (id, bp_req, token);
 						return true;
@@ -304,6 +315,7 @@ namespace WebAssembly.Net.Debugging {
 			}
 			var bp = this.breakpoints.FirstOrDefault (b => b.RemoteId == bp_id.Value);
 
+			var store = GetStoreSession (sessionId)?.Store;
 			var src = bp == null ? null : store.GetFileById (bp.Location.Id);
 
 			var callFrames = new List<JObject> ();
@@ -394,7 +406,7 @@ namespace WebAssembly.Net.Debugging {
 			SendEvent (sessionId, "Debugger.paused", o, token);
 		}
 
-		async Task OnDefaultContext (MessageId ctx_id, JObject aux_data, CancellationToken token)
+		async Task OnDefaultContext (SessionId sessionId, ExecutionContext context, CancellationToken token)
 		{
 			Log ("verbose", "Default context created, clearing state and sending events");
 
@@ -403,16 +415,15 @@ namespace WebAssembly.Net.Debugging {
 				b.State = BreakPointState.Pending;
 			}
 			this.runtime_ready = false;
-			this.ctx_id = ctx_id.id;
-			this.aux_ctx_data = aux_data;
+			contexts[sessionId.sessionId ?? ""] = context;
 
 			Log ("verbose", "checking if the runtime is ready");
-			var res = await SendMonoCommand (ctx_id, MonoCommands.IsRuntimeReady (), token);
+			var res = await SendMonoCommand (sessionId, MonoCommands.IsRuntimeReady (), token);
 			var is_ready = res.Value? ["result"]? ["value"]?.Value<bool> ();
 			//Log ("verbose", $"\t{is_ready}");
 			if (is_ready.HasValue && is_ready.Value == true) {
 				Log ("verbose", "RUNTIME LOOK READY. GO TIME!");
-				await OnRuntimeReady (ctx_id, token);
+				await OnRuntimeReady (sessionId, token);
 			}
 		}
 
@@ -568,28 +579,56 @@ namespace WebAssembly.Net.Debugging {
 			return res;
 		}
 
-		async Task LoadStore (SessionId sessionId, CancellationToken token)
+		StoreSession GetStoreSession (SessionId sessionId)
 		{
-			var loaded_pdbs = await SendMonoCommand (sessionId, MonoCommands.GetLoadedFiles(), token);
-			var the_value = loaded_pdbs.Value? ["result"]? ["value"];
-			var the_pdbs = the_value?.ToObject<string[]> ();
+			if (sessions.TryGetValue (sessionId.sessionId ?? "", out var storeSession)) {
+				return storeSession;
+			}
+			return null;
+		}
 
-			store = new DebugStore ();
-			await store.Load(sessionId, the_pdbs, token);
+
+		async Task<DebugStore> LoadStore (SessionId sessionId, CancellationToken token)
+		{
+			StoreSession storeSession = null;
+			bool existing = false;
+			lock (sessionLock) {
+				existing = sessions.TryGetValue (sessionId.sessionId ?? "", out storeSession);
+
+				if (!existing)
+					storeSession = sessions[sessionId.sessionId ?? ""] = new StoreSession ();
+			}
+
+			if (existing) {
+				return await storeSession.Source.Task;
+			}
+
+			try {
+				var loaded_pdbs = await SendMonoCommand (sessionId, MonoCommands.GetLoadedFiles(), token);
+				var the_value = loaded_pdbs.Value? ["result"]? ["value"];
+				var the_pdbs = the_value?.ToObject<string[]> ();
+
+				await storeSession.Store.Load(sessionId, the_pdbs, token);
+			} catch (Exception e) {
+				storeSession.Source.SetException (e);
+			}
+
+			storeSession.Source.SetResult (storeSession.Store);
+			return await storeSession.Source.Task;
 		}
 
 		async Task RuntimeReady (SessionId sessionId, CancellationToken token)
 		{
-			if (store == null)
-				await LoadStore (sessionId, token);
+			var store = await LoadStore (sessionId, token);
+			var context = contexts[sessionId.sessionId ?? ""];
 
 			foreach (var s in store.AllSources ()) {
 				var ok = JObject.FromObject (new {
 					scriptId = s.SourceId.ToString (),
 					url = s.Url,
-					executionContextId = this.ctx_id,
+					executionContextId = context.Id,
+					executionContextAuxData = context.AuxData,
 					hash = s.DocHashCode,
-					executionContextAuxData = this.aux_ctx_data,
 					dotNetUrl = s.DotNetUrl,
 				});
 				//Log ("verbose", $"\tsending {s.Url}");
@@ -654,7 +693,7 @@ namespace WebAssembly.Net.Debugging {
 
 		async Task SetBreakPoint (MessageId msg_id, BreakPointRequest req, CancellationToken token)
 		{
-			var bp_loc = store?.FindBestBreakpoint (req);
+			var bp_loc = GetStoreSession (msg_id)?.Store?.FindBestBreakpoint (req);
 			Log ("info", $"BP request for '{req}' runtime ready {runtime_ready} location '{bp_loc}'");
 			if (bp_loc == null) {
 
@@ -702,7 +741,7 @@ namespace WebAssembly.Net.Debugging {
 
 		bool GetPossibleBreakpoints (MessageId msg_id, SourceLocation start, SourceLocation end, CancellationToken token)
 		{
-			var bps = store.FindPossibleBreakpoints (start, end);
+			var bps = GetStoreSession (msg_id)?.Store.FindPossibleBreakpoints (start, end);
 			if (bps == null)
 				return false;
 
@@ -730,7 +769,7 @@ namespace WebAssembly.Net.Debugging {
 		async Task OnGetScriptSource (MessageId msg_id, string script_id, CancellationToken token)
 		{
 			var id = new SourceId (script_id);
-			var src_file = store.GetFileById (id);
+			var src_file = GetStoreSession (msg_id)?.Store.GetFileById (id);
 
 			var res = new StringWriter ();
 			//res.WriteLine ($"//{id}");

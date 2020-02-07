@@ -527,15 +527,6 @@ namespace WebAssembly.Net.Debugging {
 						});
 				} catch (Exception e) {
 					Console.WriteLine ($"Failed to read {url} ({e.Message})");
-					var o = JObject.FromObject (new {
-						entry = new {
-							source = "other",
-							level = "warning",
-							text = $"Failed to read {url} ({e.Message})"
-						}
-					});
-					proxy.SendEvent (sessionId, "Log.entryAdded", o, token);
-
 				}
 			}
 
