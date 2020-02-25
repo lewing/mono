@@ -639,7 +639,7 @@ run-all-%:
 	$(MAKE) -C . run-sm-$*
 	$(MAKE) -C . run-jsc-$*
 
-run-debugger-tests: build-debugger-test-app build-dbg-testsuite
+run-debugger-tests: build-debugger-test-app build-dbg-testsuite build-browser-test-suite
 	dotnet test DebuggerTestSuite
 
 run-browser-tests: build-browser-test-suite
