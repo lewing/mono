@@ -112,7 +112,10 @@ namespace WebAssembly.Net.Debugging {
 		int breakpointIndex = -1;
 		public List<Breakpoint> Breakpoints { get; } = new List<Breakpoint> ();
 
-		public bool RuntimeReady { get; set; }
+		public int ready = 0;
+		public bool IsRuntimeReady
+			=> ready != 0 && Source.Task.IsCompleted;
+
 		public int Id { get; set; }
 		public object AuxData { get; set; }
 
@@ -189,9 +192,12 @@ namespace WebAssembly.Net.Debugging {
 					switch (url) {
 					case var _ when url == "":
 					case var _ when url.StartsWith ("wasm://", StringComparison.Ordinal): {
-							Log ("info", $"ignoring wasm: Debugger.scriptParsed {url}");
+							// if we're parsing wasm and we haven't already initialized try to do it now
+							await RuntimeReady (sessionId, token);
 							return true;
 						}
+					default:
+						break;
 					}
 					Log ("info", $"proxying Debugger.scriptParsed ({sessionId.sessionId}) {url} {args}");
 					break;
@@ -293,7 +299,7 @@ namespace WebAssembly.Net.Debugging {
 			Log ("info", "Runtime ready");
 			await RuntimeReady (sessionId, token);
 			await SendCommand (sessionId, "Debugger.resume", new JObject (), token);
-			SendEvent (sessionId, "Mono.runtimeReady", new JObject (), token);
+			//SendEvent (sessionId, "Mono.runtimeReady", new JObject (), token);
 		}
 
 		//static int frame_id=0;
@@ -423,18 +429,8 @@ namespace WebAssembly.Net.Debugging {
 
 			contexts[sessionId.sessionId ?? "default"] = context;
 			//reset all bps
-			foreach (var b in context.Breakpoints){
+			foreach (var b in context.Breakpoints) {
 				b.State = BreakpointState.Pending;
-			}
-
-			Log ("info", "checking if the runtime is ready");
-			var res = await SendMonoCommand (sessionId, MonoCommands.IsRuntimeReady (), token);
-			var is_ready = res.Value? ["result"]? ["value"]?.Value<bool> ();
-			//Log ("verbose", $"\t{is_ready}");
-			if (is_ready.HasValue && is_ready.Value == true) {
-				Log ("info", "RUNTIME LOOK READY. GO TIME!");
-				await RuntimeReady (sessionId, token);
-				SendEvent (sessionId, "Mono.runtimeReady", new JObject (), token);
 			}
 		}
 
@@ -600,9 +596,8 @@ namespace WebAssembly.Net.Debugging {
 		{
 			var context = GetContext (sessionId);
 
-			if (Interlocked.CompareExchange (ref context.store, new DebugStore (), null) != null) {
+			if (Interlocked.CompareExchange (ref context.store, new DebugStore (), null) != null)
 				return await context.Source.Task;
-			}
 
 			try {
 				var loaded_pdbs = await SendMonoCommand (sessionId, MonoCommands.GetLoadedFiles(), token);
@@ -614,15 +609,15 @@ namespace WebAssembly.Net.Debugging {
 				context.Source.SetException (e);
 			}
 
-			if (!context.Source.Task.IsCompleted)
-				context.Source.SetResult (context.store);
+			if (context.Source.TrySetResult (context.store))
+				SendEvent (sessionId, "Mono.runtimeReady", new JObject (), token);
 			return await context.Source.Task;
 		}
 
 		async Task RuntimeReady (SessionId sessionId, CancellationToken token)
 		{
 			var context = GetContext (sessionId);
-			if (context.RuntimeReady)
+			if (Interlocked.CompareExchange (ref context.ready, 1, 0) == 1)
 				return;
 
 			var clear_result = await SendMonoCommand (sessionId, MonoCommands.ClearAllBreakpoints (), token);
@@ -630,18 +625,16 @@ namespace WebAssembly.Net.Debugging {
 				Log ("verbose", $"Failed to clear breakpoints due to {clear_result}");
 			}
 
-			context.RuntimeReady = true;
-			var store = await LoadStore (sessionId, token);
-
-			foreach (var s in store.AllSources ()) {
-				var scriptSource = JObject.FromObject (s.ToScriptSource (context.Id, context.AuxData));
-				Log ("verbose", $"\tsending {s.Url} {context.Id} {sessionId.sessionId}");
+			foreach (var source in (await LoadStore (sessionId, token)).AllSources ()) {
+				var scriptSource = JObject.FromObject (source.ToScriptSource (context.Id, context.AuxData));
+				Log ("info", $"\tsending {source.Url} {context.Id} {sessionId.sessionId}");
 				SendEvent (sessionId, "Debugger.scriptParsed", scriptSource, token);
 			}
 
 			foreach (var bp in context.Breakpoints) {
 				if (bp.State != BreakpointState.Pending)
 					continue;
+
 				var res = await EnableBreakPoint (sessionId, bp, token);
 				var ret_code = res.Value? ["result"]? ["value"]?.Value<int> ();
 
@@ -692,7 +685,7 @@ namespace WebAssembly.Net.Debugging {
 		{
 			var context = GetContext (msg_id);
 			var bp_loc = context.Store.FindBestBreakpoint (req);
-			Log ("info", $"BP request for '{req}' runtime ready {context.RuntimeReady} location '{bp_loc}'");
+			Log ("info", $"BP request for '{req}' runtime ready {context.IsRuntimeReady} location '{bp_loc}'");
 			if (bp_loc == null) {
 
 				Log ("verbose", $"Could not resolve breakpoint request: {req}");
@@ -704,7 +697,7 @@ namespace WebAssembly.Net.Debugging {
 			}
 
 			Breakpoint bp = null;
-			if (!context.RuntimeReady) {
+			if (!context.IsRuntimeReady) {
 				bp = new Breakpoint (bp_loc, context.NextBreakpointId (), BreakpointState.Pending);
 			} else {
 				bp = new Breakpoint (bp_loc, context.NextBreakpointId (), BreakpointState.Disabled);
@@ -750,6 +743,10 @@ namespace WebAssembly.Net.Debugging {
 		{
 			if (!SourceId.TryParse (script_id, out var id))
 				return false;
+
+			var context = GetContext (msg_id);
+			if (context.Store == null)
+				Log ("info", "asked for source too soon");
 
 			var src_file = GetContext (msg_id).Store.GetFileById (id);
 			var res = new StringWriter ();
