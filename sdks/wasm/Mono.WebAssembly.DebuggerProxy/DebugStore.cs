@@ -13,6 +13,8 @@ using System.Threading.Tasks;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace WebAssembly.Net.Debugging {
 	internal class BreakpointRequest {
@@ -82,18 +84,6 @@ namespace WebAssembly.Net.Debugging {
 				return false;
 
 			return store.AllSources().FirstOrDefault (source => TryResolve (source)) != null;
-		}
-
-		static (string Assembly, string DocumentPath) ParseDocumentUrl (string url)
-		{
-			if (Uri.TryCreate (url, UriKind.Absolute, out var docUri) && docUri.Scheme == "dotnet") {
-				return (
-					docUri.Host,
-					docUri.PathAndQuery.Substring (1)
-				);
-			} else {
-				return (null, null);
-			}
 		}
 	}
 
@@ -266,8 +256,7 @@ namespace WebAssembly.Net.Debugging {
 	}
 
 	internal class MethodInfo {
-		AssemblyInfo assembly;
-		internal MethodDefinition methodDef;
+		MethodDefinition methodDef;
 		SourceFile source;
 
 		public SourceId SourceId => source.SourceId;
@@ -276,12 +265,12 @@ namespace WebAssembly.Net.Debugging {
 
 		public SourceLocation StartLocation { get; private set; }
 		public SourceLocation EndLocation { get; private set; }
-		public AssemblyInfo Assembly => assembly;
+		public AssemblyInfo Assembly { get; private set; }
 		public int Token => (int)methodDef.MetadataToken.RID;
 
 		public MethodInfo (AssemblyInfo assembly, MethodDefinition methodDef, SourceFile source)
 		{
-			this.assembly = assembly;
+			this.Assembly = assembly;
 			this.methodDef = methodDef;
 			this.source = source;
 
@@ -339,7 +328,56 @@ namespace WebAssembly.Net.Debugging {
 		}
 	}
 
-	internal class AssemblyInfo {
+	class V8Hash {
+		static ulong [] prime = { 0x3FB75161, 0xAB1F4E4F, 0x82675BC5, 0xCD924D35, 0x81ABE279 };
+		static ulong [] random = { 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0 };
+		static uint [] randomOdd  = { 0xB4663807, 0xCC322BF5, 0xD4F91BBD, 0xA7BEA11D, 0x8F462907 };
+
+		static unsafe string CalculateHash (string str)
+		{
+    
+			ulong [] hashes = { 0, 0, 0, 0, 0 };
+			ulong [] zi = { 1, 1, 1, 1, 1 };
+			int hashesSize = hashes.Length;
+			int current = 0;
+
+			fixed (char *buffer = str) {
+				uint *uintData = (uint*)buffer;
+			
+				int sizeInBytes = sizeof(char) * str.Length;
+				for (int i = 0; i < sizeInBytes / 4; i++) {
+					uint v = uintData[i];
+					ulong xi = v * randomOdd[current] & 0x7FFFFFFF;
+					hashes[current] = (hashes[current] + zi[current] * xi) % prime[current];
+					zi[current] = (zi[current] * random[current]) % prime[current];
+					current = current == hashesSize - 1 ? 0 : current + 1;
+				}
+
+				byte *byteData = (byte *)buffer;
+				if (sizeInBytes % 4 != 0) {
+						uint v = 0;
+						for (int i = sizeInBytes - sizeInBytes % 4; i < sizeInBytes; ++i) {
+							v <<= 8;
+							v |= byteData[i];
+						}
+						ulong xi = v * randomOdd[current] & 0x7FFFFFFF;
+						hashes[current] = (hashes[current] + zi[current] * xi) % prime[current];
+						zi[current] = (zi[current] * random[current]) % prime[current];
+						current = current == hashesSize - 1 ? 0 : current + 1;
+				}
+				for (int i = 0; i < hashesSize; ++i)
+					hashes[i] = (hashes[i] + zi[i] * (prime[i] - 1)) % prime[i];
+
+				var hash = new StringBuilder ();
+				//for (ulong i = 0; i < hashesSize; ++i)
+				//	appendUnsignedAsHex(hashes[i], &hash);
+
+				return hash.ToString();
+			}
+		}
+	}
+
+	class AssemblyInfo {
 		static int next_id;
 		ModuleDefinition image;
 		readonly int id;
@@ -400,16 +438,28 @@ namespace WebAssembly.Net.Debugging {
 
 			var d2s = new Dictionary<Document, SourceFile> ();
 
-			Func<Document, SourceFile> get_src = (doc) => {
+			SourceFile FindSource (Document doc)
+			{
 				if (doc == null)
 					return null;
-				if (d2s.ContainsKey (doc))
-					return d2s [doc];
+
+				if (d2s.TryGetValue (doc, out var source))
+					return source;
+
 				var src = new SourceFile (this, sources.Count, doc, GetSourceLinkUrl (doc.Url));
 				sources.Add (src);
 				d2s [doc] = src;
 				return src;
 			};
+
+			void AddMethods (SourceFile src, MethodDefinition method)
+			{
+				var methodInfo = new MethodInfo (this, method, src);
+				int rid = (int)method.MetadataToken.RID;
+				this.methods [rid] = methodInfo;
+				if (src != null)
+					src.AddMethod (methodInfo);
+			}
 
 			foreach (var m in image.GetTypes().SelectMany(t => t.Methods)) {
 				Document first_doc = null;
@@ -429,12 +479,7 @@ namespace WebAssembly.Net.Debugging {
 				}
 
 				if (first_doc != null) {
-					var src = get_src (first_doc);
-					var mi = new MethodInfo (this, m, src);
-					int mt = (int)m.MetadataToken.RID;
-					this.methods [mt] = mi;
-					if (src != null)
-						src.AddMethod (mi);
+					AddMethods (FindSource (first_doc), m);
 				}
 			}
 		}
@@ -544,8 +589,11 @@ namespace WebAssembly.Net.Debugging {
 		public Uri SourceUri { get; }
 
 		public IEnumerable<MethodInfo> Methods => this.methods;
+
 		public byte[] EmbeddedSource => doc.EmbeddedSource;
 		public string DocUrl => doc.Url;
+
+		byte[] sourceBytes;
 
 		public (int startLine, int startColumn, int endLine, int endColumn) GetExtents ()
 		{
@@ -554,12 +602,80 @@ namespace WebAssembly.Net.Debugging {
 			return (start.StartLocation.Line, start.StartLocation.Column, end.EndLocation.Line, end.EndLocation.Column);
 		}
 
-		public async Task<byte[]> LoadSource ()
+		async Task<MemoryStream> GetDataAsync (Uri uri, CancellationToken token)
 		{
-			if (EmbeddedSource.Length > 0)
-				return await Task.FromResult (EmbeddedSource);
+			var mem = new MemoryStream ();
+			try {
+				if (uri.IsFile && File.Exists (uri.LocalPath)) {
+					using (var file = File.Open (SourceUri.LocalPath, FileMode.Open)) {
+						await file.CopyToAsync (mem, token);
+					}
+				} else if (uri.Scheme == "http" || uri.Scheme == "https") {
+					var client = new HttpClient ();
+					using (var stream = await client.GetStreamAsync (uri)) {
+						await stream.CopyToAsync (mem, token);
+					}
+				}
+			} catch (Exception) {
+				return null;
+			}
+			return mem;
+		}
 
+		HashAlgorithm GetHashAlgorithm (DocumentHashAlgorithm algorithm)
+		{
+			switch (algorithm) {
+			case DocumentHashAlgorithm.SHA1: return SHA1.Create ();
+			case DocumentHashAlgorithm.SHA256: return SHA256.Create ();
+			case DocumentHashAlgorithm.MD5: return MD5.Create ();
+			}
 			return null;
+		}
+
+		public bool CheckPdbHash (byte [] computedHash)
+		{
+			if (computedHash.Length != doc.Hash.Length)
+				return false;
+
+			for (var i = 0; i < computedHash.Length; i++)
+				if (computedHash[i] != doc.Hash[i])
+					return false;
+
+			return true;
+		}
+
+		public async Task<byte[]> ComputePdbHash (CancellationToken token = default(CancellationToken))
+		{
+			var algorithm = GetHashAlgorithm (doc.HashAlgorithm);
+			if (algorithm != null)
+				using (algorithm)
+					return algorithm.ComputeHash (await GetSourceAsync (token));
+
+			return Array.Empty<byte> ();
+		}
+
+		public async Task<MemoryStream> GetSourceStreamAsync (CancellationToken token)
+			=> new MemoryStream (await GetSourceAsync (token), false);
+
+		async Task<byte[]> GetSourceAsync (CancellationToken token = default(CancellationToken))
+		{
+			if (sourceBytes != null)
+				return sourceBytes;
+
+			if (doc.EmbeddedSource.Length > 0)
+				return sourceBytes = doc.EmbeddedSource;
+
+			MemoryStream mem;
+
+			mem = await GetDataAsync (SourceUri, token);
+			if (mem != null)
+				return sourceBytes = mem.ToArray ();
+
+			mem = await GetDataAsync (SourceLinkUri, token);
+			if (mem != null)
+				return sourceBytes = mem.ToArray ();
+
+			return sourceBytes = Array.Empty<byte> ();
 		}
 
 		public object ToScriptSource (int executionContextId, object executionContextAuxData)
