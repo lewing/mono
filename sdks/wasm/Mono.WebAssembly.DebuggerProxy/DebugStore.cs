@@ -14,7 +14,6 @@ using System.Threading;
 using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
-using System.Text;
 
 namespace WebAssembly.Net.Debugging {
 	internal class BreakpointRequest {
@@ -262,6 +261,7 @@ namespace WebAssembly.Net.Debugging {
 		public SourceId SourceId => source.SourceId;
 
 		public string Name => methodDef.Name;
+		public MethodDebugInformation DebugInformation => methodDef.DebugInformation;
 
 		public SourceLocation StartLocation { get; private set; }
 		public SourceLocation EndLocation { get; private set; }
@@ -274,7 +274,7 @@ namespace WebAssembly.Net.Debugging {
 			this.methodDef = methodDef;
 			this.source = source;
 
-			var sps = methodDef.DebugInformation.SequencePoints;
+			var sps = DebugInformation.SequencePoints;
 			if (sps == null || sps.Count() < 1)
 				return;
 
@@ -300,7 +300,7 @@ namespace WebAssembly.Net.Debugging {
 		public SourceLocation GetLocationByIl (int pos)
 		{
 			SequencePoint prev = null;
-			foreach (var sp in methodDef.DebugInformation.SequencePoints) {
+			foreach (var sp in DebugInformation.SequencePoints) {
 				if (sp.Offset > pos)
 					break;
 				prev = sp;
@@ -328,6 +328,7 @@ namespace WebAssembly.Net.Debugging {
 		}
 	}
 
+#if false
 	class V8Hash {
 		static ulong [] prime = { 0x3FB75161, 0xAB1F4E4F, 0x82675BC5, 0xCD924D35, 0x81ABE279 };
 		static ulong [] random = { 0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0 };
@@ -376,6 +377,7 @@ namespace WebAssembly.Net.Debugging {
 			}
 		}
 	}
+#endif
 
 	class AssemblyInfo {
 		static int next_id;
@@ -462,24 +464,8 @@ namespace WebAssembly.Net.Debugging {
 			}
 
 			foreach (var m in image.GetTypes().SelectMany(t => t.Methods)) {
-				Document first_doc = null;
 				foreach (var sp in m.DebugInformation.SequencePoints) {
-					if (first_doc == null && !sp.Document.Url.EndsWith (".g.cs", StringComparison.OrdinalIgnoreCase)) {
-						first_doc = sp.Document;
-					}
-					//  else if (first_doc != sp.Document) {
-					//	//FIXME this is needed for (c)ctors in corlib
-					//	throw new Exception ($"Cant handle multi-doc methods in {m}");
-					//}
-				}
-
-				if (first_doc == null) {
-					// all generated files
-					first_doc = m.DebugInformation.SequencePoints.FirstOrDefault ()?.Document;
-				}
-
-				if (first_doc != null) {
-					AddMethods (FindSource (first_doc), m);
+					AddMethods (FindSource (sp.Document), m);
 				}
 			}
 		}
@@ -532,9 +518,8 @@ namespace WebAssembly.Net.Debugging {
 			return rel;
 		}
 
-		public IEnumerable<SourceFile> Sources {
-			get { return this.sources; }
-		}
+		public IEnumerable<SourceFile> Sources
+			=> this.sources;
 
 		public int Id => id;
 		public string Name => image.Name;
@@ -802,7 +787,7 @@ namespace WebAssembly.Net.Debugging {
 			}
 
 			foreach (var method in doc.Methods) {
-				foreach (var sequencePoint in method.methodDef.DebugInformation.SequencePoints) {
+				foreach (var sequencePoint in method.DebugInformation.SequencePoints) {
 					if (!sequencePoint.IsHidden && Match (sequencePoint, start, end))
 						res.Add (new SourceLocation (method, sequencePoint));
 				}
@@ -845,7 +830,7 @@ namespace WebAssembly.Net.Debugging {
 				yield break;
 
 			foreach (var method in sourceFile.Methods) {
-				foreach (var sequencePoint in method.methodDef.DebugInformation.SequencePoints) {
+				foreach (var sequencePoint in method.DebugInformation.SequencePoints) {
 					//FIXME handle multi doc methods
 					if (!sequencePoint.IsHidden && Match (sequencePoint, request.Line, request.Column))
 						yield return new SourceLocation (method, sequencePoint);
