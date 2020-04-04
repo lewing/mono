@@ -41,7 +41,7 @@ namespace WebAssembly.Net.Debugging {
 					JObject value = await proxy.TryGetVariableValue (msg_id, scope_id, var.Identifier.Text, token);
 
 					if (value == null)
-						throw new Exception ("The name \"" + var.Identifier.Text + "\" does not exist in the current context");
+						throw new Exception ($"The name \"{var.Identifier.Text}\" does not exist in the current context");
 
 					values.Add (ConvertJSToCSharpType (value ["value"] ["value"].ToString (), value ["value"] ["type"].ToString ()));
 

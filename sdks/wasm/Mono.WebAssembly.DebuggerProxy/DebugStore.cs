@@ -28,9 +28,8 @@ namespace WebAssembly.Net.Debugging {
 		public bool IsResolved => Assembly != null;
 		public List<Breakpoint> Locations { get; } = new List<Breakpoint> ();
 
-		public override string ToString () {
-			return $"BreakpointRequest Assembly: {Assembly} File: {File} Line: {Line} Column: {Column}";
-		}
+		public override string ToString ()
+			=> $"BreakpointRequest Assembly: {Assembly} File: {File} Line: {Line} Column: {Column}";
 
 		public object AsSetBreakpointByUrlResponse ()
 			=> new { breakpointId = Id, locations = Locations.Select(l => l.Location.AsLocation ()) };
@@ -103,9 +102,7 @@ namespace WebAssembly.Net.Debugging {
 		public int Index { get; private set; }
 
 		public override string ToString ()
-		{
-			return $"(var-info [{Index}] '{Name}')";
-		}
+			=> $"(var-info [{Index}] '{Name}')";
 	}
 
 	internal class CliLocation {
@@ -146,9 +143,7 @@ namespace WebAssembly.Net.Debugging {
 		public CliLocation CliLocation => this.cliLoc;
 
 		public override string ToString ()
-		{
-			return $"{id}:{Line}:{Column}";
-		}
+			=> $"{id}:{Line}:{Column}";
 
 		public static SourceLocation Parse (JObject obj)
 		{
@@ -224,9 +219,7 @@ namespace WebAssembly.Net.Debugging {
 		}
 
 		public override string ToString ()
-		{
-			return $"{Scheme}{assembly}_{document}";
-		}
+			=> $"{Scheme}{assembly}_{document}";
 
 		public override bool Equals (object obj)
 		{
@@ -237,9 +230,7 @@ namespace WebAssembly.Net.Debugging {
 		}
 
 		public override int GetHashCode ()
-		{
-			return this.assembly.GetHashCode () ^ this.document.GetHashCode ();
-		}
+			=> this.assembly.GetHashCode () ^ this.document.GetHashCode ();
 
 		public static bool operator == (SourceId a, SourceId b)
 		{
@@ -249,9 +240,7 @@ namespace WebAssembly.Net.Debugging {
 		}
 
 		public static bool operator != (SourceId a, SourceId b)
-		{
-			return !a.Equals (b);
-		}
+			=> !a.Equals (b);
 	}
 
 	internal class MethodInfo {
@@ -317,7 +306,6 @@ namespace WebAssembly.Net.Debugging {
 			var res = new List<VarInfo> ();
 
 			res.AddRange (methodDef.Parameters.Select (p => new VarInfo (p)));
-
 			res.AddRange (methodDef.DebugInformation.GetScopes ()
 				.Where (s => s.Start.Offset <= offset && (s.End.IsEndOfMethod || s.End.Offset > offset))
 				.SelectMany (s => s.Variables)
