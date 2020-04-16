@@ -1,19 +1,19 @@
 using System;
-using System.IO;
 using System.Collections.Generic;
-using Mono.Cecil;
-using Mono.Cecil.Cil;
+using System.IO;
 using System.Linq;
-using Newtonsoft.Json.Linq;
 using System.Net.Http;
-using Mono.Cecil.Pdb;
-using Newtonsoft.Json;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using System.Threading;
-using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Mono.Cecil;
+using Mono.Cecil.Cil;
+using Mono.Cecil.Pdb;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace WebAssembly.Net.Debugging {
 	internal class BreakpointRequest {
@@ -127,33 +127,29 @@ namespace WebAssembly.Net.Debugging {
 	}
 
 	internal class SourceLocation {
-		SourceId id;
-		int line;
-		int column;
-		CliLocation cliLoc;
+
 
 		public SourceLocation (SourceId id, int line, int column)
 		{
-			this.id = id;
-			this.line = line;
-			this.column = column;
+			this.Id = id;
+			this.Line = line;
+			this.Column = column;
 		}
 
 		public SourceLocation (MethodInfo mi, SequencePoint sp)
 		{
-			this.id = mi.SourceId;
-			this.line = sp.StartLine - 1;
-			this.column = sp.StartColumn - 1;
-			this.cliLoc = new CliLocation (mi, sp.Offset);
+			this.Id = mi.SourceId;
+			this.Line = sp.StartLine - 1;
+			this.Column = sp.StartColumn - 1;
+			this.CliLocation = new CliLocation (mi, sp.Offset);
 		}
 
-		public SourceId Id { get => id; }
-		public int Line { get => line; }
-		public int Column { get => column; }
-		public CliLocation CliLocation => this.cliLoc;
+		public SourceId Id { get; }
+		public int Line { get; }
+		public int Column { get; }
+		public CliLocation CliLocation { get; }
 
-		public override string ToString ()
-			=> $"{id}:{Line}:{Column}";
+
 
 		public static SourceLocation Parse (JObject obj)
 		{
@@ -173,10 +169,13 @@ namespace WebAssembly.Net.Debugging {
 
 		internal object AsLocation ()
 			=> new {
-				scriptId = id.ToString (),
-				lineNumber = line,
-				columnNumber = column
+				scriptId = Id.ToString (),
+				lineNumber = Line,
+				columnNumber = Column
 			};
+
+		public override string ToString ()
+			=> $"{Id}:{Line}:{Column}";
 	}
 
 	internal class SourceId {
@@ -228,9 +227,6 @@ namespace WebAssembly.Net.Debugging {
 			return true;
 		}
 
-		public override string ToString ()
-			=> $"{Scheme}{assembly}_{document}";
-
 		public override bool Equals (object obj)
 		{
 			if (obj == null)
@@ -243,15 +239,18 @@ namespace WebAssembly.Net.Debugging {
 			=> assembly.GetHashCode () ^ document.GetHashCode ();
 
 		public static bool operator == (SourceId a, SourceId b)
-			=> ((object)a == null) ? (object)b == null : a.Equals (b);
+			=> a?.Equals (b) ?? (object)b == null;
 
 		public static bool operator != (SourceId a, SourceId b)
-			=> !a.Equals (b);
+			=> !(a?.Equals (b) ?? (object)b == null);
+
+		public override string ToString ()
+			=> $"{Scheme}{assembly}_{document}";
 	}
 
 	internal class MethodInfo {
-		MethodDefinition methodDef;
-		SourceFile source;
+		readonly MethodDefinition methodDef;
+		readonly SourceFile source;
 
 		public SourceId SourceId => source.SourceId;
 
@@ -325,31 +324,30 @@ namespace WebAssembly.Net.Debugging {
 	}
 
 	internal class TypeInfo {
-		AssemblyInfo assembly;
-		TypeDefinition type;
-		List<MethodInfo> methods;
+		readonly AssemblyInfo assembly;
+		readonly TypeDefinition type;
 
-		public TypeInfo (AssemblyInfo assembly, TypeDefinition type) {
+				public TypeInfo (AssemblyInfo assembly, TypeDefinition type) {
 			this.assembly = assembly;
 			this.type = type;
-			methods = new List<MethodInfo> ();
+			Methods = new List<MethodInfo> ();
 		}
 
 		public string Name => type.Name;
 		public string FullName => type.FullName;
-		public List<MethodInfo> Methods => methods;
+		public List<MethodInfo> Methods { get; }
 
-		public override string ToString () => "TypeInfo('" + FullName + "')";
+		public override string ToString () => $"TypeInfo('{FullName}')";
 	}
 
 	class AssemblyInfo {
 		static int next_id;
-		ModuleDefinition image;
+		readonly ModuleDefinition image;
 		readonly int id;
 		readonly ILogger logger;
-		Dictionary<uint, MethodInfo> methods = new Dictionary<uint, MethodInfo> ();
+		readonly Dictionary<uint, MethodInfo> methods = new Dictionary<uint, MethodInfo> ();
 		Dictionary<string, string> sourceLinkMappings = new Dictionary<string, string>();
-		Dictionary<string, TypeInfo> typesByName = new Dictionary<string, TypeInfo> ();
+		readonly Dictionary<string, TypeInfo> typesByName = new Dictionary<string, TypeInfo> ();
 		readonly List<SourceFile> sources = new List<SourceFile>();
 		internal string Url { get; }
 
@@ -488,16 +486,14 @@ namespace WebAssembly.Net.Debugging {
 			return rel;
 		}
 
-		public IEnumerable<SourceFile> Sources
+		public List<SourceFile> Sources
 			=> this.sources;
 
 		public int Id => id;
 		public string Name => image.Name;
 
 		public SourceFile GetDocById (int document)
-		{
-			return sources.FirstOrDefault (s => s.SourceId.Document == document);
-		}
+			=> sources.FirstOrDefault (s => s.SourceId.Document == document);
 
 		public MethodInfo GetMethodByToken (uint token)
 		{
@@ -512,10 +508,10 @@ namespace WebAssembly.Net.Debugging {
 	}
 
 	internal class SourceFile {
-		Dictionary<uint, MethodInfo> methods;
-		AssemblyInfo assembly;
-		int id;
-		Document doc;
+		readonly Dictionary<uint, MethodInfo> methods;
+		readonly AssemblyInfo assembly;
+		readonly int id;
+		readonly Document doc;
 
 		internal SourceFile (AssemblyInfo assembly, int id, Document doc, Uri sourceLinkUri)
 		{
@@ -523,6 +519,7 @@ namespace WebAssembly.Net.Debugging {
 			this.SourceLinkUri = sourceLinkUri;
 			this.assembly = assembly;
 			this.id = id;
+			this.SourceId = new SourceId (assembly.Id, this.id);
 			this.doc = doc;
 			this.DebuggerFileName = doc.Url.Replace ("\\", "/").Replace (":", "");
 
@@ -545,7 +542,7 @@ namespace WebAssembly.Net.Debugging {
 		public string AssemblyName => assembly.Name;
 		public string DotNetUrl => $"dotnet://{assembly.Name}/{DebuggerFileName}";
 
-		public SourceId SourceId => new SourceId (assembly.Id, this.id);
+		public SourceId SourceId { get; }
 		public Uri SourceLinkUri { get; }
 		public Uri SourceUri { get; }
 
@@ -619,18 +616,12 @@ namespace WebAssembly.Net.Debugging {
 			if (doc.EmbeddedSource.Length > 0)
 				return new MemoryStream (doc.EmbeddedSource, false);
 
-			MemoryStream mem;
-
-			mem = await GetDataAsync (SourceUri, token);
-			if (mem != null && (!checkHash || CheckPdbHash (ComputePdbHash (mem)))) {
-				mem.Position = 0;
-				return mem;
-			}
-
-			mem = await GetDataAsync (SourceLinkUri, token);
-			if (mem != null && (!checkHash || CheckPdbHash (ComputePdbHash (mem)))) {
-				mem.Position = 0;
-				return mem;
+			foreach (var uri in new [] { SourceUri, SourceLinkUri }) {
+				var mem = await GetDataAsync (uri, token);
+				if (mem != null && (!checkHash || CheckPdbHash (ComputePdbHash (mem)))) {
+						mem.Position = 0;
+						return mem;
+				}
 			}
 
 			return MemoryStream.Null;
@@ -650,7 +641,7 @@ namespace WebAssembly.Net.Debugging {
 	}
 
 	internal class DebugStore {
-		List<AssemblyInfo> assemblies = new List<AssemblyInfo> ();
+		readonly List<AssemblyInfo> assemblies = new List<AssemblyInfo> ();
 		readonly HttpClient client;
 		readonly ILogger logger;
 
