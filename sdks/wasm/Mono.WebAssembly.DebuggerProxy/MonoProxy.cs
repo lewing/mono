@@ -202,14 +202,15 @@ namespace WebAssembly.Net.Debugging {
 					if (objId.StartsWith ("dotnet:", StringComparison.Ordinal)) {
 						var parts = objId.Split (new char [] { ':' });
 						if (parts.Length < 3)
-							return true;
+							return false;
+
 						switch (parts [1]) {
 						case "scope": {
-								await GetEvaluateOnCallFrame (id, int.Parse (parts [2]), args? ["expression"]?.Value<string> (), token);
-								break;
+								return await OnEvaluateOnCallFrame (id,
+									int.Parse (parts [2]),
+									args? ["expression"]?.Value<string> (), token);
 							}
 						}
-						return true;
 					}
 					return false;
 				}
@@ -592,12 +593,12 @@ namespace WebAssembly.Net.Debugging {
 			return null;
 		}
 
-		async Task GetEvaluateOnCallFrame (MessageId msg_id, int scope_id, string expression, CancellationToken token)
+		async Task<bool> OnEvaluateOnCallFrame (MessageId msg_id, int scope_id, string expression, CancellationToken token)
 		{
 			try {
 				var context = GetContext (msg_id);
 				if (context.CallStack == null)
-					return;
+					return false;
 
 				var varValue = await TryGetVariableValue (msg_id, scope_id, expression, false, token);
 
@@ -606,7 +607,7 @@ namespace WebAssembly.Net.Debugging {
 					SendResponse (msg_id, Result.OkFromObject (new {
 						result = varValue ["value"]
 					}), token);
-					return;
+					return true;
 				}
 
 				string retValue = await EvaluateExpression.CompileAndRunTheExpression (this, msg_id, scope_id, expression, token);
@@ -615,10 +616,11 @@ namespace WebAssembly.Net.Debugging {
 						value = retValue
 					}
 				}), token);
+				return true;
 			} catch (Exception e) {
 				logger.LogTrace (e, $"Error in EvaluateOnCallFrame for expression '{expression}.");
-				SendResponse (msg_id, Result.OkFromObject (new {}), token);
 			}
+			return false;
 		}
 
 		async Task<Result> GetScopeProperties (MessageId msg_id, int scope_id, CancellationToken token)
