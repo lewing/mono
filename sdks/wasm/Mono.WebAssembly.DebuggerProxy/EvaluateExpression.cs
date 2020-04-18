@@ -19,10 +19,12 @@ namespace WebAssembly.Net.Debugging {
 		class FindThisExpression : CSharpSyntaxWalker {
 			public List<string> thisExpressions = new List<string> ();
 			public SyntaxTree syntaxTree;
+
 			public FindThisExpression (SyntaxTree syntax)
 			{
 				syntaxTree = syntax;
 			}
+
 			public override void Visit (SyntaxNode node)
 			{
 				if (node is ThisExpressionSyntax) {
