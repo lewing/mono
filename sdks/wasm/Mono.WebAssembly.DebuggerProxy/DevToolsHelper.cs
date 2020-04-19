@@ -119,8 +119,10 @@ namespace WebAssembly.Net.Debugging {
 		public static Result Ok (JObject ok)
 			=> new Result (ok, null);
 
-		public static Result OkFromObject (object ok)
+		public static Result Ok (object ok)
 			=> Ok (JObject.FromObject(ok));
+
+		public static Result EmptyResult { get; } = Ok (new { result = new {} });
 
 		public static Result Err (JObject err)
 			=> new Result (null, err);

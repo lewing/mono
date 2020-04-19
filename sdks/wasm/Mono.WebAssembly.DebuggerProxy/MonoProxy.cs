@@ -171,7 +171,7 @@ namespace WebAssembly.Net.Debugging {
 						await SetBreakpoint (id, store, request, token);
 					}
 
-					SendResponse (id, Result.OkFromObject (request.AsSetBreakpointByUrlResponse()), token);
+					SendResponse (id, Result.Ok (request.AsSetBreakpointByUrlResponse()), token);
 					return true;
 				}
 
@@ -225,7 +225,7 @@ namespace WebAssembly.Net.Debugging {
 						break;
 
 					await SendMonoCommand (id, new MonoCommands ($"MONO.mono_wasm_release_object('{objectId}')"), token);
-					SendResponse (id, Result.OkFromObject (new{}), token);
+					SendResponse (id, Result.Ok (new{}), token);
 					return true;
 				}
 
@@ -284,7 +284,7 @@ namespace WebAssembly.Net.Debugging {
 
 				SendEvent (id, "Debugger.breakpointResolved", JObject.FromObject (resolvedLocation), token);
 
-				SendResponse (id, Result.OkFromObject (new {
+				SendResponse (id, Result.Ok (new {
 						result = new { breakpointId = bpid, locations = new object [] { loc.AsLocation () }}
 					}), token);
 
@@ -296,7 +296,7 @@ namespace WebAssembly.Net.Debugging {
 
 					var silent = args ["silent"]?.Value<bool> () ?? false;
 					if (objectId.Scheme == "scope") {
-						var fail = silent ? Result.OkFromObject (new { result = new { } }) : Result.Exception (new ArgumentException ($"Runtime.callFunctionOn not supported with scope ({objectId})."));
+						var fail = silent ? Result.EmptyResult : Result.Exception (new ArgumentException ($"Runtime.callFunctionOn not supported with scope ({objectId})."));
 
 						SendResponse (id, fail, token);
 						return true;
@@ -309,10 +309,10 @@ namespace WebAssembly.Net.Debugging {
 					if (!returnByValue &&
 						DotnetObjectId.TryParse (res.Value?["result"]?["value"]?["objectId"], out var resultObjectId)
 						&& resultObjectId.Scheme == "cfo_res")
-						res = Result.OkFromObject (new { result = res.Value ["result"]["value"] });
+						res = Result.Ok (new { result = res.Value ["result"]["value"] });
 
 					if (res.IsErr && silent)
-						res = Result.OkFromObject (new { result = new { } });
+						res = Result.EmptyResult;
 
 					SendResponse (id, res, token);
 					return true;
@@ -335,14 +335,14 @@ namespace WebAssembly.Net.Debugging {
 				// Runtime.callFunctionOn result object
 				var value_json_str = res.Value ["result"]?["value"]?["__value_as_json_string__"]?.Value<string> ();
 				if (value_json_str != null) {
-					res = Result.OkFromObject (new {
+					res = Result.Ok (new {
 							result = JArray.Parse (value_json_str.Replace (@"\""", "\""))
 					});
 				} else {
-					res = Result.OkFromObject (new { result = new {} });
+					res = Result.EmptyResult;
 				}
 			} else {
-				res = Result.Ok (JObject.FromObject (new { result = res.Value ["result"] ["value"] }));
+				res = Result.Ok (new { result = res.Value ["result"] ["value"] });
 			}
 
 			return res;
@@ -584,14 +584,14 @@ namespace WebAssembly.Net.Debugging {
 
 				if (varValue != null) {
 					varValue ["value"] ["description"] = varValue ["value"] ["className"];
-					SendResponse (msg_id, Result.OkFromObject (new {
+					SendResponse (msg_id, Result.Ok (new {
 						result = varValue ["value"]
 					}), token);
 					return true;
 				}
 
 				string retValue = await EvaluateExpression.CompileAndRunTheExpression (this, msg_id, scope_id, expression, token);
-				SendResponse (msg_id, Result.OkFromObject (new {
+				SendResponse (msg_id, Result.Ok (new {
 					result = new {
 						value = retValue
 					}
@@ -623,7 +623,7 @@ namespace WebAssembly.Net.Debugging {
 				var values = res.Value? ["result"]? ["value"]?.Values<JObject> ().ToArray ();
 
 				if(values == null)
-					return Result.OkFromObject (new { result = Array.Empty<object> () });
+					return Result.Ok (new { result = Array.Empty<object> () });
 
 				var var_list = new List<object> ();
 				int i = 0;
@@ -636,7 +636,7 @@ namespace WebAssembly.Net.Debugging {
 					var_list.Add (values [i]);
 				}
 
-				return Result.OkFromObject (new { result = var_list });
+				return Result.Ok (new { result = var_list });
 			} catch (Exception exception) {
 				Log ("verbose", $"Error resolving scope properties {exception.Message}");
 				return Result.Exception (exception);
@@ -781,13 +781,13 @@ namespace WebAssembly.Net.Debugging {
 
 			var response = new { locations = bps.Select (b => b.AsLocation ()) };
 
-			SendResponse (msg, Result.OkFromObject (response), token);
+			SendResponse (msg, Result.Ok (response), token);
 			return true;
 		}
 
 		void OnCompileDotnetScript (MessageId msg_id, CancellationToken token)
 		{
-			SendResponse (msg_id, Result.OkFromObject (new { }), token);
+			SendResponse (msg_id, Result.Ok (new { }), token);
 		}
 
 		async Task<bool> OnGetScriptSource (MessageId msg_id, string script_id, CancellationToken token)
@@ -808,7 +808,7 @@ namespace WebAssembly.Net.Debugging {
 						using (var reader = new StreamReader (data))
 							source = await reader.ReadToEndAsync ();
 				}
-				SendResponse (msg_id, Result.OkFromObject (new { scriptSource = source }), token);
+				SendResponse (msg_id, Result.Ok (new { scriptSource = source }), token);
 			} catch (Exception e) {
 				var o = new {
 					scriptSource = $"// Unable to read document ({e.Message})\n" +
@@ -816,7 +816,7 @@ namespace WebAssembly.Net.Debugging {
 								$"SourceLink path: {src_file?.SourceLinkUri}\n"
 				};
 
-				SendResponse (msg_id, Result.OkFromObject (o), token);
+				SendResponse (msg_id, Result.Ok (o), token);
 			}
 			return true;
 		}
