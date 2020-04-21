@@ -126,7 +126,7 @@ namespace System.Globalization
 
 			return UseManagedCollation ?
 				internal_index_managed (s1, sindex, count, s2, opt, first) :
-				internal_index (s1, sindex, count, s2, first);
+				internal_index (s1, sindex, count, s2, opt, first);
 		}
 
 		int internal_compare_switch (string str1, int offset1, int length1, string str2, int offset2, int length2, CompareOptions options)
@@ -176,15 +176,15 @@ namespace System.Globalization
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		private static unsafe extern int internal_index_icall (char *source, int sindex,
-			int count, char *value, int value_length, bool first);
+			int count, char *value, int value_length, CompareOptions options, bool first);
 
 		private static unsafe int internal_index (string source, int sindex,
-			int count, string value, bool first)
+			int count, string value, CompareOptions options, bool first)
 		{
 			fixed (char* fixed_source = source,
 				     fixed_value = value)
 				return internal_index_icall (fixed_source, sindex, count,
-					fixed_value, value?.Length ?? 0, first);
+					fixed_value, value?.Length ?? 0, options, first);
 		}
 	}
 }

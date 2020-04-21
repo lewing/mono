@@ -742,10 +742,35 @@ ves_icall_System_Globalization_CompareInfo_internal_compare (const gunichar2 *us
 
 gint32
 ves_icall_System_Globalization_CompareInfo_internal_index (const gunichar2 *src, gint32 sindex,
-	gint32 count, const gunichar2 *cmpstr, gint32 lencmpstr, MonoBoolean first)
+	gint32 count, const gunichar2 *cmpstr, gint32 lencmpstr, gint32 options, MonoBoolean first)
 {
 	gint32 pos,i;
 	
+	if (options & CompareOptions_IgnoreCase) {
+		if(first) {
+			count -= lencmpstr;
+			for(pos=sindex;pos <= sindex+count;pos++) {
+				for(i=0;string_invariant_compare_char (src[pos+i], cmpstr[i], options);) {
+					if(++i==lencmpstr) {
+						return(pos);
+					}
+				}
+			}
+
+			return(-1);
+		} else {
+			for(pos=sindex-lencmpstr+1;pos>sindex-count;pos--) {
+				for(i=0;string_invariant_compare_char (src[pos+i], cmpstr[i], options);) {
+					if(++i==lencmpstr) {
+						return(pos);
+					}
+				}
+			}
+
+			return(-1);
+		}
+	}
+
 	if(first) {
 		count -= lencmpstr;
 		for(pos=sindex;pos <= sindex+count;pos++) {

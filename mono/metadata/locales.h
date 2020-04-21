@@ -51,7 +51,7 @@ void ves_icall_System_Globalization_CompareInfo_free_internal_collator (MonoComp
 
 ICALL_EXPORT gint32
 ves_icall_System_Globalization_CompareInfo_internal_index (const gunichar2 *source, gint32 sindex,
-	gint32 count, const gunichar2 *value, gint32 value_length, MonoBoolean first);
+	gint32 count, const gunichar2 *value, gint32 value_length, gint32 options, MonoBoolean first);
 
 #endif /* !ENABLE_NETCORE */
 
