@@ -122,7 +122,7 @@ namespace System.Globalization
 				return first ? s1.IndexOfUnchecked (s2, sindex, count) : s1.LastIndexOfUnchecked (s2, sindex, count);
 
 			if (IgnoreCaseNotSupported && opt.HasFlag (CompareOptions.IgnoreCase))
-				throw new PlatformNotSupportedException ("The current collater does not support IgnoreCase on this platform");
+				throw new PlatformNotSupportedException ("String comparisons for this culture are not enabled because collation data was not built into the application. To include collation data in the application, see https://aka.ms/webassembly-collations");
 
 			return UseManagedCollation ?
 				internal_index_managed (s1, sindex, count, s2, opt, first) :
@@ -131,8 +131,8 @@ namespace System.Globalization
 
 		int internal_compare_switch (string str1, int offset1, int length1, string str2, int offset2, int length2, CompareOptions options)
 		{
-			if (IgnoreCaseNotSupported && options.HasFlag (CompareOptions.IgnoreCase))
-				throw new PlatformNotSupportedException ("The current collater does not support IgnoreCase on this platform");
+			if (IgnoreCaseNotSupported && options.HasFlag (CompareOptions.IgnoreCase)) {
+				throw new PlatformNotSupportedException ("String comparisons for this culture are not enabled because collation data was not built into the application. To include collation data in the application, see https://aka.ms/webassembly-collations");
 
 			return UseManagedCollation ?
 				internal_compare_managed (str1, offset1, length1,
