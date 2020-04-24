@@ -14,6 +14,7 @@ using System.Threading;
 using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace WebAssembly.Net.Debugging {
 	internal class BreakpointRequest {
@@ -478,16 +479,6 @@ namespace WebAssembly.Net.Debugging {
 			return null;
 		}
 
-		private static string GetRelativePath (string relativeTo, string path)
-		{
-			var uri = new Uri (relativeTo, UriKind.RelativeOrAbsolute);
-			var rel = Uri.UnescapeDataString (uri.MakeRelativeUri (new Uri (path, UriKind.RelativeOrAbsolute)).ToString ()).Replace (Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
-			if (rel.Contains (Path.DirectorySeparatorChar.ToString ()) == false) {
-				rel = $".{ Path.DirectorySeparatorChar }{ rel }";
-			}
-			return rel;
-		}
-
 		public IEnumerable<SourceFile> Sources
 			=> this.sources;
 
@@ -524,14 +515,48 @@ namespace WebAssembly.Net.Debugging {
 			this.assembly = assembly;
 			this.id = id;
 			this.doc = doc;
+
 			this.DebuggerFileName = doc.Url.Replace ("\\", "/").Replace (":", "");
 
 			this.SourceUri = new Uri ((Path.IsPathRooted (doc.Url) ? "file://" : "") + doc.Url, UriKind.RelativeOrAbsolute);
-			if (SourceUri.IsFile && File.Exists (SourceUri.LocalPath)) {
-				this.Url = this.SourceUri.ToString ();
-			} else {
-				this.Url = DotNetUrl;
+			
+			if (SourceUri.IsFile) {
+				if (File.Exists (SourceUri.LocalPath)) {
+					this.Url = this.SourceUri.ToString ();
+					return;
+				} if (File.Exists (doc.Url)) {
+					var file = new Uri (doc.Url);
+					this.Url = $"file://{EscapeAscii (file.LocalPath)}";
+					return;
+				}
 			}
+
+			this.Url = DotNetUrl;
+		}
+
+		static string EscapeAscii (string path)
+		{
+			var builder = new StringBuilder ();
+			foreach (char c in path) {
+				switch (c) {
+				case var _ when c >= 'a' && c <= 'z':
+				case var _ when c >= 'A' && c <= 'Z':
+				case var _ when char.IsDigit (c) :
+				case var _ when c > 255:
+				case var _ when c == '+' || c == ':' || c == '.' || c == '-' || c == '_' || c == '~':
+					builder.Append(c);
+					break;
+                case var _ when c == Path.DirectorySeparatorChar:
+				case var _ when c == Path.AltDirectorySeparatorChar:
+                case var _ when c == '\\':
+					builder.Append(c);
+					break;
+				default:
+					builder.Append(string.Format ($"%{((int)c):X2}"));
+					break;
+				}
+			}
+			return builder.ToString();
 		}
 
 		internal void AddMethod (MethodInfo mi)
@@ -560,26 +585,41 @@ namespace WebAssembly.Net.Debugging {
 			return (start.StartLocation.Line, start.StartLocation.Column, end.EndLocation.Line, end.EndLocation.Column);
 		}
 
-		async Task<MemoryStream> GetDataAsync (Uri uri, CancellationToken token)
+		async Task<MemoryStream> GetDataAsync (string path, CancellationToken token)
 		{
-			var mem = new MemoryStream ();
 			try {
-				if (uri.IsFile && File.Exists (uri.LocalPath)) {
-					using (var file = File.Open (SourceUri.LocalPath, FileMode.Open)) {
+				if (File.Exists (path)) {
+					using (var file = File.Open (path, FileMode.Open)) {
+						var mem = new MemoryStream ();
 						await file.CopyToAsync (mem, token);
 						mem.Position = 0;
+						return mem;
 					}
+				}
+				var uri = new Uri (path);
+				return await GetDataAsync (uri, token).ConfigureAwait (false);
+			} catch (Exception) {
+			}
+			return null;
+		}
+
+		async Task<MemoryStream> GetDataAsync (Uri uri, CancellationToken token)
+		{
+			try {
+				if (uri.IsFile && File.Exists (uri.LocalPath)) {
+					return await GetDataAsync (uri.LocalPath, token);
 				} else if (uri.Scheme == "http" || uri.Scheme == "https") {
 					var client = new HttpClient ();
 					using (var stream = await client.GetStreamAsync (uri)) {
+						var mem = new MemoryStream ();
 						await stream.CopyToAsync (mem, token);
 						mem.Position = 0;
+						return mem;
 					}
 				}
 			} catch (Exception) {
-				return null;
 			}
-			return mem;
+			return null;
 		}
 
 		static HashAlgorithm GetHashAlgorithm (DocumentHashAlgorithm algorithm)
@@ -619,20 +659,13 @@ namespace WebAssembly.Net.Debugging {
 			if (doc.EmbeddedSource.Length > 0)
 				return new MemoryStream (doc.EmbeddedSource, false);
 
-			MemoryStream mem;
-
-			mem = await GetDataAsync (SourceUri, token);
-			if (mem != null && (!checkHash || CheckPdbHash (ComputePdbHash (mem)))) {
-				mem.Position = 0;
-				return mem;
+			foreach (var url in new object [] { doc.Url, SourceUri, SourceLinkUri }) {
+				var mem = url is Uri ? await GetDataAsync (url as Uri, token) : await GetDataAsync (url as string, token);
+				if (mem != null && mem.Length > 0 && (!checkHash || CheckPdbHash (ComputePdbHash (mem)))) {
+						mem.Position = 0;
+						return mem;
+				}
 			}
-
-			mem = await GetDataAsync (SourceLinkUri, token);
-			if (mem != null && (!checkHash || CheckPdbHash (ComputePdbHash (mem)))) {
-				mem.Position = 0;
-				return mem;
-			}
-
 			return MemoryStream.Null;
 		}
 
