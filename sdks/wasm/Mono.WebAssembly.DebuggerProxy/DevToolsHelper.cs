@@ -265,7 +265,8 @@ namespace WebAssembly.Net.Debugging {
 	internal class ExecutionContext {
 		public string DebuggerId { get; set; }
 		public Dictionary<string,BreakpointRequest> BreakpointRequests { get; } = new Dictionary<string,BreakpointRequest> ();
-
+		public List<FileIntegrity> LoadedFiles { get; set; }
+ 
 		public TaskCompletionSource<DebugStore> ready = null;
 		public bool IsRuntimeReady => ready != null && ready.Task.IsCompleted;
 

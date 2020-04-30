@@ -1,20 +1,20 @@
 using System;
-using System.IO;
 using System.Collections.Generic;
-using Mono.Cecil;
-using Mono.Cecil.Cil;
+using System.IO;
 using System.Linq;
-using Newtonsoft.Json.Linq;
 using System.Net.Http;
-using Mono.Cecil.Pdb;
-using Newtonsoft.Json;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using System.Threading;
-using Microsoft.Extensions.Logging;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Mono.Cecil;
+using Mono.Cecil.Cil;
+using Mono.Cecil.Pdb;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace WebAssembly.Net.Debugging {
 	internal class BreakpointRequest {
@@ -250,6 +250,56 @@ namespace WebAssembly.Net.Debugging {
 			=> !a.Equals (b);
 	}
 
+	internal class LocationResolver {
+		readonly Dictionary<string,string> mappings;
+
+		public LocationResolver (Dictionary<string, string> mappings = null)
+		{
+			this.mappings = mappings ?? new Dictionary<string, string> ();
+		}
+
+		public void AddSourceLink (string sourceLink)
+		{
+			if (sourceLink == null)
+				return;
+
+			var docs = JObject.Parse (sourceLink) ["documents"];
+			var map = JsonConvert.DeserializeObject<Dictionary<string, string>> (docs.ToString ());
+
+			if (map == null)
+				return;
+
+			foreach (var link in map) {
+				mappings[link.Key] = link.Value;
+			}
+		}
+
+		public void AddLink (string key, string value)
+		{
+			mappings [key] = value;
+		}
+
+		public string Resolve (string location)
+		{
+			if (mappings.TryGetValue (location, out var mapped))
+				return mapped;
+
+			foreach (var link in mappings) {
+				if (Path.GetFileName (link.Key) != "*")
+					continue;
+
+				var key = link.Key.TrimEnd ('*');
+				if (location.StartsWith (key, StringComparison.OrdinalIgnoreCase)) {
+					var globbed = link.Value.Replace ("*",
+						location.Replace (key, "", StringComparison.OrdinalIgnoreCase),
+						StringComparison.OrdinalIgnoreCase);
+					return globbed;
+				}
+			}
+			return location;
+		}
+	}
+
 	internal class MethodInfo {
 		MethodDefinition methodDef;
 		SourceFile source;
@@ -345,16 +395,15 @@ namespace WebAssembly.Net.Debugging {
 
 	class AssemblyInfo {
 		static int next_id;
-		ModuleDefinition image;
+		readonly ModuleDefinition image;
 		readonly int id;
-		readonly ILogger logger;
-		Dictionary<uint, MethodInfo> methods = new Dictionary<uint, MethodInfo> ();
-		Dictionary<string, string> sourceLinkMappings = new Dictionary<string, string>();
-		Dictionary<string, TypeInfo> typesByName = new Dictionary<string, TypeInfo> ();
+		readonly Dictionary<uint, MethodInfo> methods = new Dictionary<uint, MethodInfo> ();
+		readonly LocationResolver sourceLinkMappings = new LocationResolver ();
+		readonly Dictionary<string, TypeInfo> typesByName = new Dictionary<string, TypeInfo> ();
 		readonly List<SourceFile> sources = new List<SourceFile>();
 		internal string Url { get; }
 
-		public AssemblyInfo (string url, byte[] assembly, byte[] pdb)
+		public AssemblyInfo (string url, Stream assembly, Stream pdb, ILogger logger, IAssemblyResolver resolver)
 		{
 			this.id = Interlocked.Increment (ref next_id);
 
@@ -368,11 +417,11 @@ namespace WebAssembly.Net.Debugging {
 				rp.ReadSymbols = true;
 				rp.SymbolReaderProvider = new PdbReaderProvider ();
 				if (pdb != null)
-					rp.SymbolStream = new MemoryStream (pdb);
+					rp.SymbolStream = pdb;
 				rp.ReadingMode = ReadingMode.Immediate;
 				rp.InMemory = true;
-
-				this.image = ModuleDefinition.ReadModule (new MemoryStream (assembly), rp);
+				rp.AssemblyResolver = resolver;
+				this.image = ModuleDefinition.ReadModule (assembly, rp);
 			} catch (BadImageFormatException ex) {
 				logger.LogWarning ($"Failed to read assembly as portable PDB: {ex.Message}");
 			} catch (ArgumentException) {
@@ -380,6 +429,9 @@ namespace WebAssembly.Net.Debugging {
 				// read the assembly without symbols below
 				if (pdb != null)
 					throw;
+
+				// reset the position of the memory stream for the next load
+				assembly.Position = 0;
 			}
 
 			if (this.image == null) {
@@ -387,21 +439,16 @@ namespace WebAssembly.Net.Debugging {
 				if (pdb != null) {
 					rp.ReadSymbols = true;
 					rp.SymbolReaderProvider = new PdbReaderProvider ();
-					rp.SymbolStream = new MemoryStream (pdb);
+					rp.SymbolStream = pdb;
 				}
 
 				rp.ReadingMode = ReadingMode.Immediate;
 				rp.InMemory = true;
-
-				this.image = ModuleDefinition.ReadModule (new MemoryStream (assembly), rp);
+				rp.AssemblyResolver = resolver;
+				this.image = ModuleDefinition.ReadModule (assembly, rp);
 			}
 
 			Populate ();
-		}
-
-		public AssemblyInfo (ILogger logger)
-		{
-			this.logger = logger;
 		}
 
 		void Populate ()
@@ -444,37 +491,18 @@ namespace WebAssembly.Net.Debugging {
 
 		private void ProcessSourceLink ()
 		{
-			var sourceLinkDebugInfo = image.CustomDebugInformations.FirstOrDefault (i => i.Kind == CustomDebugInformationKind.SourceLink);
+			var sourceLinkDebugInfo = image?.CustomDebugInformations?.FirstOrDefault (i => i.Kind == CustomDebugInformationKind.SourceLink);
 
 			if (sourceLinkDebugInfo != null) {
-				var sourceLinkContent = ((SourceLinkDebugInformation)sourceLinkDebugInfo).Content;
-
-				if (sourceLinkContent != null) {
-					var jObject = JObject.Parse (sourceLinkContent) ["documents"];
-					sourceLinkMappings = JsonConvert.DeserializeObject<Dictionary<string, string>> (jObject.ToString ());
-				}
+				sourceLinkMappings.AddSourceLink (((SourceLinkDebugInformation)sourceLinkDebugInfo).Content);
 			}
 		}
 
 		private Uri GetSourceLinkUrl (string document)
 		{
-			if (sourceLinkMappings.TryGetValue (document, out string url))
-				return new Uri (url);
-
-			foreach (var sourceLinkDocument in sourceLinkMappings) {
-				string key = sourceLinkDocument.Key;
-
-				if (Path.GetFileName (key) != "*") {
-					continue;
-				}
-
-				var keyTrim = key.TrimEnd ('*');
-
-				if (document.StartsWith(keyTrim, StringComparison.OrdinalIgnoreCase)) {
-					var docUrlPart = document.Replace (keyTrim, "");
-					return new Uri (sourceLinkDocument.Value.TrimEnd ('*') + docUrlPart);
-				}
-			}
+			var resolved = sourceLinkMappings.Resolve (document);
+			if (resolved != document)
+				return new Uri (resolved);
 
 			return null;
 		}
@@ -484,6 +512,7 @@ namespace WebAssembly.Net.Debugging {
 
 		public int Id => id;
 		public string Name => image.Name;
+		public AssemblyDefinition Assembly => image.Assembly;
 
 		public SourceFile GetDocById (int document)
 		{
@@ -585,43 +614,6 @@ namespace WebAssembly.Net.Debugging {
 			return (start.StartLocation.Line, start.StartLocation.Column, end.EndLocation.Line, end.EndLocation.Column);
 		}
 
-		async Task<MemoryStream> GetDataAsync (string path, CancellationToken token)
-		{
-			try {
-				if (File.Exists (path)) {
-					using (var file = File.Open (path, FileMode.Open)) {
-						var mem = new MemoryStream ();
-						await file.CopyToAsync (mem, token);
-						mem.Position = 0;
-						return mem;
-					}
-				}
-				var uri = new Uri (path);
-				return await GetDataAsync (uri, token).ConfigureAwait (false);
-			} catch (Exception) {
-			}
-			return null;
-		}
-
-		async Task<MemoryStream> GetDataAsync (Uri uri, CancellationToken token)
-		{
-			try {
-				if (uri.IsFile && File.Exists (uri.LocalPath)) {
-					return await GetDataAsync (uri.LocalPath, token);
-				} else if (uri.Scheme == "http" || uri.Scheme == "https") {
-					var client = new HttpClient ();
-					using (var stream = await client.GetStreamAsync (uri)) {
-						var mem = new MemoryStream ();
-						await stream.CopyToAsync (mem, token);
-						mem.Position = 0;
-						return mem;
-					}
-				}
-			} catch (Exception) {
-			}
-			return null;
-		}
-
 		static HashAlgorithm GetHashAlgorithm (DocumentHashAlgorithm algorithm)
 		{
 			switch (algorithm) {
@@ -654,13 +646,16 @@ namespace WebAssembly.Net.Debugging {
 			return Array.Empty<byte> ();
 		}
 
-		public async Task<Stream> GetSourceAsync (bool checkHash, CancellationToken token = default(CancellationToken))
+		internal async Task<Stream> GetSourceAsync (DebugStore store, bool checkHash, CancellationToken token)
 		{
 			if (doc.EmbeddedSource.Length > 0)
 				return new MemoryStream (doc.EmbeddedSource, false);
 
 			foreach (var url in new object [] { doc.Url, SourceUri, SourceLinkUri }) {
-				var mem = url is Uri ? await GetDataAsync (url as Uri, token) : await GetDataAsync (url as string, token);
+				var mem = url is Uri ?
+					await store.GetDataAsync (url as Uri, token).ConfigureAwait (false) :
+					await store.GetDataAsync (url as string, token).ConfigureAwait (false);
+
 				if (mem != null && mem.Length > 0 && (!checkHash || CheckPdbHash (ComputePdbHash (mem)))) {
 						mem.Position = 0;
 						return mem;
@@ -682,78 +677,145 @@ namespace WebAssembly.Net.Debugging {
 		}
 	}
 
+	internal class FileIntegrity {
+		public FileIntegrity (string url, string integrity = "")
+		{
+			Url = url;
+			Integrity = integrity;
+		}
+
+		public string Url { get; }
+		public string Integrity { get; }
+	}
+
 	internal class DebugStore {
-		List<AssemblyInfo> assemblies = new List<AssemblyInfo> ();
+		Dictionary<string, AssemblyInfo> assemblies = new Dictionary<string, AssemblyInfo> ();
+		Dictionary<string, AssemblyData> processing;
+		LocationResolver DataLink { get; } = new LocationResolver ();
 		readonly HttpClient client;
 		readonly ILogger logger;
 
-		public DebugStore (ILogger logger, HttpClient client) {
+		public DebugStore (ILogger logger, HttpClient client)
+		{
 			this.client = client;
 			this.logger = logger;
+			//DataLink.AddLink ("http://localhost:5000/_framework/_bin/*", "/Users/lewing/Source/Test#ourcodedir/smile😟/bin/Debug/netstandard2.1/wwwroot/_framework/_bin/*");
 		}
 
 		public DebugStore (ILogger logger) : this (logger, new HttpClient ())
 		{
 		}
 
-		class DebugItem {
-			public string Url { get; set; }
-			public Task<byte[][]> Data { get; set; }
+		class AssemblyData {
+			public string Url { get; }
+			public Task<Stream []> Data { get; }
+			public string Name { get; }
+
+			public AssemblyData (DebugStore store, FileIntegrity assembly, FileIntegrity pdb, CancellationToken token)
+			{
+				Name = Path.GetFileNameWithoutExtension (assembly.Url);
+				Url = assembly.Url;
+				Data = Task.WhenAll (store.GetDataAsync (assembly, token), store.GetDataAsync (pdb, token));
+			}
 		}
 
-		public async IAsyncEnumerable<SourceFile> Load (SessionId sessionId, string [] loaded_files, [EnumeratorCancellation] CancellationToken token)
+		public Task<Stream> GetSourceAsync (SourceId id, bool checkHash, CancellationToken token)
+		{
+			var src = GetFileById (id);
+			return src.GetSourceAsync (this, checkHash, token);
+		}
+
+		Task<Stream> GetDataAsync (FileIntegrity asm, CancellationToken token)
+		{
+			if (asm == null)
+				return Task.FromResult<Stream> (null);
+
+			return GetDataAsync (DataLink.Resolve (asm.Url), token);
+		}
+
+		internal async Task<Stream> GetDataAsync (string path, CancellationToken token)
+		{
+			try {
+				if (File.Exists (path)) {
+					using (var file = File.Open (path, FileMode.Open)) {
+						var mem = new MemoryStream ();
+						await file.CopyToAsync (mem, token).ConfigureAwait (false);
+						mem.Position = 0;
+						return mem;
+					}
+				}
+				var uri = new Uri (path);
+				return await GetDataAsync (uri, token).ConfigureAwait (false);
+			} catch (Exception) {
+			}
+			return null;
+		}
+
+		internal async Task<Stream> GetDataAsync (Uri uri, CancellationToken token)
+		{
+			try {
+				if (uri.IsFile && File.Exists (uri.LocalPath)) {
+					return await GetDataAsync (uri.LocalPath, token).ConfigureAwait (false);
+				} else if (uri.Scheme == "http" || uri.Scheme == "https") {
+					using (var stream = await client.GetStreamAsync (uri).ConfigureAwait (false)) {
+						var mem = new MemoryStream ();
+						await stream.CopyToAsync (mem, token).ConfigureAwait (false);
+						mem.Position = 0;
+						return mem;
+					}
+				}
+			} catch (Exception) {
+			}
+			return null;
+		}
+
+		public async IAsyncEnumerable<SourceFile> Load (SessionId sessionId, List<FileIntegrity> loaded_files, [EnumeratorCancellation] CancellationToken token)
 		{
 			static bool MatchPdb (string asm, string pdb)
 				=> Path.ChangeExtension (asm, "pdb") == pdb;
 
-			var asm_files = new List<string> ();
-			var pdb_files = new List<string> ();
-			foreach (var file_name in loaded_files) {
-				if (file_name.EndsWith (".pdb", StringComparison.OrdinalIgnoreCase))
-					pdb_files.Add (file_name);
+			var asm_files = new List<FileIntegrity> ();
+			var pdb_files = new List<FileIntegrity> ();
+			foreach (var entry in loaded_files) {
+				if (entry.Url.EndsWith (".pdb", StringComparison.OrdinalIgnoreCase))
+					pdb_files.Add (entry);
 				else
-					asm_files.Add (file_name);
+					asm_files.Add (entry);
 			}
 
-			List<DebugItem> steps = new List<DebugItem> ();
-			foreach (var url in asm_files) {
-				try {
-					var pdb = pdb_files.FirstOrDefault (n => MatchPdb (url, n));
-					steps.Add (
-						new DebugItem {
-								Url = url,
-								Data = Task.WhenAll (client.GetByteArrayAsync (url), pdb != null ? client.GetByteArrayAsync (pdb) : Task.FromResult<byte []> (null))
-						});
-				} catch (Exception e) {
-					logger.LogDebug ($"Failed to read {url} ({e.Message})");
-				}
+			var steps = new List<AssemblyData> ();
+			foreach (var asm in asm_files) {
+				var pdb = pdb_files.FirstOrDefault (n => MatchPdb (asm.Url, n.Url));
+				steps.Add (new AssemblyData (this, asm, pdb, token));
 			}
 
+			processing = steps.ToDictionary (k => k.Name, v => v);
+			var resolver = new DefaultAssemblyResolver ();
 			foreach (var step in steps) {
 				AssemblyInfo assembly = null;
 				try {
-					var bytes = await step.Data;
-					assembly = new AssemblyInfo (step.Url, bytes [0], bytes [1]);
+					var streams = await step.Data.ConfigureAwait (false);
+					assembly = new AssemblyInfo (step.Url, streams [0], streams [1], logger, resolver);
 				} catch (Exception e) {
 					logger.LogDebug ($"Failed to load {step.Url} ({e.Message})");
 				}
 				if (assembly == null)
 					continue;
 
-				assemblies.Add (assembly);
+				assemblies [assembly.Assembly.FullName] = assembly;
 				foreach (var source in assembly.Sources)
 					yield return source;
 			}
 		}
 
 		public IEnumerable<SourceFile> AllSources ()
-			=> assemblies.SelectMany (a => a.Sources);
+			=> assemblies.Values.SelectMany (a => a.Sources);
 
 		public SourceFile GetFileById (SourceId id)
 			=> AllSources ().SingleOrDefault (f => f.SourceId.Equals (id));
 
 		public AssemblyInfo GetAssemblyByName (string name)
-			=> assemblies.FirstOrDefault (a => a.Name.Equals (name, StringComparison.InvariantCultureIgnoreCase));
+			=> assemblies.Values.FirstOrDefault (a => a.Name.Equals (name, StringComparison.OrdinalIgnoreCase));
 
 		/*
 		V8 uses zero based indexing for both line and column.
@@ -834,7 +896,7 @@ namespace WebAssembly.Net.Debugging {
 		{
 			request.TryResolve (this);
 
-			var asm = assemblies.FirstOrDefault (a => a.Name.Equals (request.Assembly, StringComparison.OrdinalIgnoreCase));
+			var asm = GetAssemblyByName (request.Assembly);
 			var sourceFile = asm?.Sources?.SingleOrDefault (s => s.DebuggerFileName.Equals (request.File, StringComparison.OrdinalIgnoreCase));
 
 			if (sourceFile == null)

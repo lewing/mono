@@ -440,7 +440,6 @@ var MonoSupportLib = {
 		},
 
 		mono_wasm_start_single_stepping: function (kind) {
-			console.log (">> mono_wasm_start_single_stepping " + kind);
 			if (!this.mono_wasm_setup_single_step)
 				this.mono_wasm_setup_single_step = Module.cwrap ("mono_wasm_setup_single_step", 'number', [ 'number']);
 
@@ -453,7 +452,7 @@ var MonoSupportLib = {
 		mono_wasm_runtime_ready: function () {
 			this.mono_wasm_runtime_is_ready = true;
 			// DO NOT REMOVE - magic debugger init function
-			console.debug ("mono_wasm_runtime_ready", "fe00e07a-5519-4dfe-b35a-f867dbaf2e28");
+			console.debug ("mono_wasm_runtime_ready", "fe00e07a-5519-4dfe-b35a-f867dbaf2e28", JSON.stringify (this.loaded_files));
 
 			this._next_value_type_id_var = 0;
 			this._value_types_cache = {};

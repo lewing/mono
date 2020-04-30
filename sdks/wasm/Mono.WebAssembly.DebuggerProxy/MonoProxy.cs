@@ -6,7 +6,6 @@ using Newtonsoft.Json.Linq;
 using System.Threading;
 using System.IO;
 using System.Collections.Generic;
-using System.Net;
 using Microsoft.Extensions.Logging;
 using Microsoft.CodeAnalysis;
 
@@ -45,8 +44,24 @@ namespace WebAssembly.Net.Debugging {
 			case "Runtime.consoleAPICalled": {
 					var type = args["type"]?.ToString ();
 					if (type == "debug") {
-						if (args["args"]?[0]?["value"]?.ToString () == MonoConstants.RUNTIME_IS_READY && args["args"]?[1]?["value"]?.ToString () == "fe00e07a-5519-4dfe-b35a-f867dbaf2e28")
+						var a = args["args"];
+					
+						if (a?[0]?["value"]?.ToString () == MonoConstants.RUNTIME_IS_READY &&
+							a?[1]?["value"]?.ToString () == "fe00e07a-5519-4dfe-b35a-f867dbaf2e28") {
+							if (a.Count () > 2) {
+								try {
+									// The optional 3rd argument is the stringified assembly
+									// list so that we don't have to make more round trips
+									var context = GetContext (sessionId);
+									var loaded = a? [2]? ["value"]?.ToString ();
+									if (loaded != null)
+										context.LoadedFiles = ParseLoaded (JToken.Parse (loaded));
+								} catch (InvalidCastException ice) {
+									Log ("verbose", ice.ToString ());
+								}
+							}
 							await RuntimeReady (sessionId, token);
+						}
 					}
 					break;
 				}
@@ -99,13 +114,27 @@ namespace WebAssembly.Net.Debugging {
 					break;
 				}
 
+			case "Network.requestWillBeSent": {
+					var doc = args["request"]?["url"]?.Value<string> ();
+					var ext = Path.GetExtension (doc);
+					switch (doc) {
+					case var boot when Path.GetFileName (doc) == "blazor.boot.json":
+						break;
+					case var _ when Path.GetExtension (doc) == ".dll":
+					case var _ when Path.GetExtension (doc) == ".pdb":
+						break;
+					}
+					break;
+				}
 			}
-
 			return false;
 		}
 
 		async Task<bool> IsRuntimeAlreadyReadyAlready (SessionId sessionId, CancellationToken token)
 		{
+			if (contexts.TryGetValue (sessionId, out var context) && context.IsRuntimeReady)
+				return true;
+
 			var res = await SendMonoCommand (sessionId, MonoCommands.IsRuntimeReady (), token);
 			return res.Value? ["result"]? ["value"]?.Value<bool> () ?? false;
 		}
@@ -687,6 +716,17 @@ namespace WebAssembly.Net.Debugging {
 			return bp;
 		}
 
+		List<FileIntegrity> ParseLoaded (JToken loaded)
+		{
+			if (loaded == null)
+				return null;
+
+			if (loaded.Type == JTokenType.Array)
+				return loaded.Values().Select (v => new FileIntegrity (v.ToString ())).ToList();
+
+			return loaded.Values<KeyValuePair<string,string>> ().Select (kvp => new FileIntegrity (kvp.Key, kvp.Value)).ToList ();
+		}
+
 		async Task<DebugStore> LoadStore (SessionId sessionId, CancellationToken token)
 		{
 			var context = GetContext (sessionId);
@@ -695,11 +735,13 @@ namespace WebAssembly.Net.Debugging {
 				return await context.Source.Task;
 
 			try {
-				var loaded_pdbs = await SendMonoCommand (sessionId, MonoCommands.GetLoadedFiles(), token);
-				var the_value = loaded_pdbs.Value? ["result"]? ["value"];
-				var the_pdbs = the_value?.ToObject<string[]> ();
+				var files = context.LoadedFiles;
+				if (files == null || files.Count == 0) {
+					var loaded_result = await SendMonoCommand (sessionId, MonoCommands.GetLoadedFiles(), token);
+					files = ParseLoaded (loaded_result.Value? ["result"]? ["value"]);
+				}
 
-				await foreach (var source in context.store.Load(sessionId, the_pdbs, token).WithCancellation (token)) {
+				await foreach (var source in context.store.Load(sessionId, files, token).WithCancellation (token)) {
 					var scriptSource = JObject.FromObject (source.ToScriptSource (context.Id, context.AuxData));
 					Log ("verbose", $"\tsending {source.Url} {context.Id} {sessionId.sessionId}");
 
@@ -820,13 +862,14 @@ namespace WebAssembly.Net.Debugging {
 			if (!SourceId.TryParse (script_id, out var id))
 				return false;
 
-			var src_file = (await LoadStore (msg_id, token)).GetFileById (id);
+			var store = await LoadStore (msg_id, token);
+			var src_file = store.GetFileById (id);
 
 			try {
 				var uri = new Uri (src_file.Url);
 				string source = $"// Unable to find document {src_file.SourceUri}";
 
-				using (var data = await src_file.GetSourceAsync (checkHash: false, token: token)) {
+				using (var data = await store.GetSourceAsync (id, checkHash: false, token: token)) {
 						if (data.Length == 0)
 							return false;
 
